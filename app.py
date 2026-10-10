@@ -114,17 +114,55 @@ def split_workout_volume(row):
 
 
 # ---------------------------------------------------------
-# 3. DUAL-MODE DATA LOADER (LOCAL & CLOUD SECRETS)
+# 3. PASSWORD GATE & CONDITIONAL DATA LOADER
 # ---------------------------------------------------------
+def check_password():
+    if "password_correct" not in st.session_state:
+        st.session_state["password_correct"] = False
+
+    if not st.session_state["password_correct"]:
+        st.sidebar.markdown("### 🔒 Owner Login")
+        password_input = st.sidebar.text_input("Enter Password for Real Data", type="password")
+        if st.sidebar.button("Login"):
+            try:
+                if password_input == st.secrets["password"]["pin"]:
+                    st.session_state["password_correct"] = True
+                    st.rerun()
+                else:
+                    st.sidebar.error("Incorrect password")
+            except Exception:
+                st.sidebar.error("Password secret not configured.")
+        return False
+    return True
+
+is_authenticated = check_password()
+
 @st.cache_data(ttl=60)
-def load_sheet(tab_name):
+def load_sheet(tab_name, authenticated):
+    # If not authenticated, return clean demo data so public viewers see a working preview
+    if not authenticated:
+        if tab_name == "Weight":
+            return pd.DataFrame({"Date": pd.date_range(end=datetime.today(), periods=30), "Weight": [175 - i*0.1 for i in range(30)]})
+        elif tab_name == "Steps":
+            return pd.DataFrame({"Date": pd.date_range(end=datetime.today(), periods=30), "Step Count": [10000 + (i*120)%3000 for i in range(30)]})
+        elif tab_name == "Sleep":
+            return pd.DataFrame({"Date": pd.date_range(end=datetime.today(), periods=30), "Hours Slept": [7.5 for _ in range(30)]})
+        elif tab_name == "Workouts":
+            return pd.DataFrame({
+                "Date": pd.date_range(end=datetime.today(), periods=10),
+                "Exercise": ["Bench Press", "Squat", "Deadlift"] * 3 + ["Bench Press"],
+                "Weight": [225, 315, 405] * 3 + [225],
+                "Reps": [5, 5, 3] * 3 + [5],
+                "Muscle": ["Chest", "Quads", "Back"] * 3 + ["Chest"]
+            })
+        return pd.DataFrame()
+
+    # If authenticated, pull real Google Sheet data securely
     try:
-        # 1. Check if running on Streamlit Cloud with Secrets configured
         if "gspread" in st.secrets:
             creds_dict = dict(st.secrets["gspread"])
             gc = gspread.service_account_from_dict(creds_dict)
         else:
-            # 2. Fallback to local file execution (Mac Terminal)
             gc = gspread.service_account(filename="credentials.json")
             
         sh = gc.open("Health Dashboard")
@@ -141,10 +179,10 @@ def load_sheet(tab_name):
     except Exception:
         return pd.DataFrame()
 
-raw_weight_df = load_sheet("Weight")
-raw_steps_df = load_sheet("Steps")
-raw_sleep_df = load_sheet("Sleep")
-raw_workouts_df = load_sheet("Workouts")
+raw_weight_df = load_sheet("Weight", is_authenticated)
+raw_steps_df = load_sheet("Steps", is_authenticated)
+raw_sleep_df = load_sheet("Sleep", is_authenticated)
+raw_workouts_df = load_sheet("Workouts", is_authenticated)
 
 if not raw_steps_df.empty and "Step Count" in raw_steps_df.columns:
     raw_steps_df["Step Count"] = raw_steps_df["Step Count"].astype(str).str.replace(",", "").astype(float)
@@ -166,11 +204,11 @@ workouts_df = raw_workouts_df.copy()
 # 4. SIDEBAR CONTROLS & DYNAMIC DATE COLORING
 # ---------------------------------------------------------
 st.sidebar.title("⚡ CONTROL CENTER")
-if st.sidebar.button("🔄 Sync Sheet Data", use_container_width=True):
-    st.cache_data.clear()
-    st.rerun()
-
-st.sidebar.divider()
+if is_authenticated:
+    if st.sidebar.button("🔄 Sync Sheet Data", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+    st.sidebar.divider()
 
 all_dates = []
 for df in [raw_weight_df, raw_steps_df, raw_sleep_df, raw_workouts_df]:
@@ -181,7 +219,6 @@ is_filtered = False
 if all_dates:
     min_d, max_d = min(all_dates).date(), max(all_dates).date()
     
-    # Check if a custom range is set before rendering label
     if "date_picker" in st.session_state and isinstance(st.session_state["date_picker"], tuple) and len(st.session_state["date_picker"]) == 2:
         p_start, p_end = st.session_state["date_picker"][0], st.session_state["date_picker"][1]
         if p_start > min_d or p_end < max_d:
@@ -209,7 +246,8 @@ if all_dates:
 # 5. RESTRUCTURED 2-ROW KPI CARDS
 # ---------------------------------------------------------
 st.title("⚡ PRO HEALTH OPERATING SYSTEM")
-st.caption("Live Biometric Telemetry & Compound Loading Engine")
+mode_banner = "🔓 Live Owner Mode" if is_authenticated else "👁️ Public Demo Preview Mode"
+st.caption(f"Live Biometric Telemetry & Compound Loading Engine — *{mode_banner}*")
 st.divider()
 
 # ROW 1: 7-DAY MOVING AVERAGES + RANGE TONNAGE
@@ -307,12 +345,12 @@ with tab_forecast:
             
             weight_df["EMA_14"] = weight_df["Weight"].ewm(span=14, adjust=False).mean()
             recent_ema14 = weight_df["EMA_14"].tail(14)
-            daily_rate_14 = (recent_ema14.iloc[-1] - recent_ema14.iloc[0]) / 14.0
+            daily_rate_14 = (recent_ema14.iloc[-1] - recent_ema14.iloc[0]) / 14.0 if len(recent_ema14) > 1 else 0.0
             weekly_rate_14 = round(daily_rate_14 * 7.0, 2)
             
             weight_df["EMA_30"] = weight_df["Weight"].ewm(span=30, adjust=False).mean()
             recent_ema30 = weight_df["EMA_30"].tail(30)
-            daily_rate_30 = (recent_ema30.iloc[-1] - recent_ema30.iloc[0]) / 30.0
+            daily_rate_30 = (recent_ema30.iloc[-1] - recent_ema30.iloc[0]) / 30.0 if len(recent_ema30) > 1 else 0.0
             weekly_rate_30 = round(daily_rate_30 * 7.0, 2)
             
             st.write(f"**Current Weight:** {curr_weight} lbs")
@@ -354,7 +392,7 @@ with tab_forecast:
             fig_f.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", yaxis=dict(showgrid=False), legend=HIGH_CONTRAST_LEGEND)
             st.plotly_chart(fig_f, use_container_width=True)
 
-# RESTRUCTURED STRENGTH & WORKING WEIGHT ENGINE
+# STRENGTH & WORKING WEIGHT ENGINE
 with tab_workouts:
     st.subheader("🏋️ Working Weight Trajectory & Performance History")
     if not workouts_df.empty:
