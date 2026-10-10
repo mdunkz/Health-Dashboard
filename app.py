@@ -114,12 +114,19 @@ def split_workout_volume(row):
 
 
 # ---------------------------------------------------------
-# 3. DATA LOADER & PROCESSING
+# 3. DUAL-MODE DATA LOADER (LOCAL & CLOUD SECRETS)
 # ---------------------------------------------------------
 @st.cache_data(ttl=60)
 def load_sheet(tab_name):
     try:
-        gc = gspread.service_account(filename="credentials.json")
+        # 1. Check if running on Streamlit Cloud with Secrets configured
+        if "gspread" in st.secrets:
+            creds_dict = dict(st.secrets["gspread"])
+            gc = gspread.service_account_from_dict(creds_dict)
+        else:
+            # 2. Fallback to local file execution (Mac Terminal)
+            gc = gspread.service_account(filename="credentials.json")
+            
         sh = gc.open("Health Dashboard")
         worksheet = sh.worksheet(tab_name)
         data = worksheet.get_all_records()
