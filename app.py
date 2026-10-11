@@ -139,7 +139,6 @@ is_authenticated = check_password()
 
 @st.cache_data(ttl=60)
 def load_sheet(tab_name, authenticated):
-    # If not authenticated, return clean demo data so public viewers see a working preview
     if not authenticated:
         if tab_name == "Weight":
             return pd.DataFrame({"Date": pd.date_range(end=datetime.today(), periods=30), "Weight": [175 - i*0.1 for i in range(30)]})
@@ -157,7 +156,6 @@ def load_sheet(tab_name, authenticated):
             })
         return pd.DataFrame()
 
-    # If authenticated, pull real Google Sheet data securely
     try:
         if "gspread" in st.secrets:
             creds_dict = dict(st.secrets["gspread"])
@@ -190,7 +188,12 @@ if not raw_steps_df.empty and "Step Count" in raw_steps_df.columns:
 if not raw_workouts_df.empty and {"Exercise", "Weight", "Reps"}.issubset(raw_workouts_df.columns):
     raw_workouts_df["Weight"] = pd.to_numeric(raw_workouts_df["Weight"], errors="coerce").fillna(0)
     raw_workouts_df["Reps"] = pd.to_numeric(raw_workouts_df["Reps"], errors="coerce").fillna(0)
-    raw_workouts_df["Set"] = pd.to_numeric(raw_workouts_df.get("Set", 1), errors="coerce").fillna(1)
+    
+    if "Set" in raw_workouts_df.columns:
+        raw_workouts_df["Set"] = pd.to_numeric(raw_workouts_df["Set"], errors="coerce").fillna(1)
+    else:
+        raw_workouts_df["Set"] = 1
+
     raw_workouts_df["Volume"] = raw_workouts_df["Weight"] * raw_workouts_df["Reps"]
     raw_workouts_df["Epley_1RM"] = np.where(raw_workouts_df["Reps"] > 0, raw_workouts_df["Weight"] * (1 + raw_workouts_df["Reps"] / 30.0), 0)
 
